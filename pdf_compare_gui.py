@@ -24,6 +24,8 @@ LANGUAGES = {
         "minus": "-",
         "plus": "+",
         "zero": "0",
+        "dialog_orig": "ДОБАВЬТЕ ОРИГИНАЛЬНЫЙ PDF",
+        "dialog_final": "ДОБАВЬТЕ ФИНАЛЬНЫЙ PDF",
     },
     "en": {
         "choose": "Choose PDF",
@@ -42,6 +44,8 @@ LANGUAGES = {
         "minus": "-",
         "plus": "+",
         "zero": "0",
+        "dialog_orig": "ADD ORIGINAL PDF",
+        "dialog_final": "ADD FINAL PDF",
     },
     "he": {
         "choose": "בחר PDF",
@@ -60,6 +64,8 @@ LANGUAGES = {
         "minus": "-",
         "plus": "+",
         "zero": "0",
+        "dialog_orig": "הוסף PDF מקורי",
+        "dialog_final": "הוסף PDF סופי",
     }
 }
 
@@ -93,6 +99,8 @@ class PDFBitmapCompareApp:
         self.root.bind("<KeyPress-space>", self.enable_hand_mode)
         self.root.bind("<KeyRelease-space>", self.disable_hand_mode)
         self.root.bind("<Configure>", self.on_resize)
+        # --- Сразу открывать диалог выбора файлов ---
+        self.root.after(100, self.choose_files)
 
     def init_ui(self):
         control_frame = tk.Frame(self.root, bg="#F3F3F3")
@@ -202,13 +210,14 @@ class PDFBitmapCompareApp:
         messagebox.showinfo(tr("about", self.language), tr("about_msg", self.language))
 
     def choose_files(self):
+        self.zoom_params = [None, None]
         self.status.config(text=tr("select_orig", self.language))
-        file1 = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+        file1 = filedialog.askopenfilename(title=tr("dialog_orig", self.language), filetypes=[("PDF files", "*.pdf")])
         if not file1: return
         self.pdf_paths[0] = file1  # type: ignore  # noqa
 
         self.status.config(text=tr("select_final", self.language))
-        file2 = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+        file2 = filedialog.askopenfilename(title=tr("dialog_final", self.language), filetypes=[("PDF files", "*.pdf")])
         if not file2: return
         self.pdf_paths[1] = file2  # type: ignore  # noqa
 
