@@ -88,6 +88,7 @@ class PDFBitmapCompareApp:
         self.fit_scale = 1.0
         self._hand_mode = False
         self._pan_data = {"drag": False, "x": 0, "y": 0}
+        self.zoom_params: list[tuple[float, int, int] | None] = [None, None]  # [(scale, offset_x, offset_y), ...] для original и final
         self.init_ui()
         self.root.bind("<KeyPress-space>", self.enable_hand_mode)
         self.root.bind("<KeyRelease-space>", self.disable_hand_mode)
@@ -242,9 +243,9 @@ class PDFBitmapCompareApp:
             self.render_pdf_images()
 
     def scale_reset(self):
+        self.zoom_params = [None, None]
         self.scale_percent = 0
         self.render_pdf_images()
-        # Сброс прокрутки после ресета масштаба
         for canvas in [self.canvas_original, self.canvas_final]:
             canvas.xview_moveto(0)
             canvas.yview_moveto(0)
@@ -290,25 +291,32 @@ class PDFBitmapCompareApp:
         img_w = tk_img.width()
         img_h = tk_img.height()
         idx = 0 if canvas == self.canvas_original else 1
-        
-        # Простое центрирование изображения
-        if img_w < w:
-            x0 = (w - img_w) // 2
+        # --- zoom ---
+        zoom = self.zoom_params[idx]
+        if zoom:
+            scale, offset_x, offset_y = zoom
+            disp_w = int(img_w * scale)
+            disp_h = int(img_h * scale)
+            img_resized = ImageTk.getimage(tk_img).resize((disp_w, disp_h), Image.Resampling.LANCZOS)
+            bg = Image.new("RGB", (w, h), (255, 255, 255))
+            bg.paste(img_resized, (offset_x, offset_y))
+            tk_zoomed = ImageTk.PhotoImage(bg)
+            canvas.create_image(0, 0, anchor="nw", image=tk_zoomed, tags="pdfimg")
+            canvas.image = tk_zoomed
         else:
-            x0 = 0
-        if img_h < h:
-            y0 = (h - img_h) // 2
-        else:
-            y0 = 0
-            
-        print(f"DISPLAY {idx}: img={img_w}x{img_h}, canvas={w}x{h}, pos=({x0},{y0})")
-        
-        canvas.create_image(x0, y0, anchor="nw", image=tk_img, tags="pdfimg")
-        canvas.image = tk_img
-        canvas.image_offset = (x0, y0)
-        
-        # Правильная настройка scrollregion для прокрутки
-        # scrollregion должен включать всю область изображения
+            # Простое центрирование изображения
+            if img_w < w:
+                x0 = (w - img_w) // 2
+            else:
+                x0 = 0
+            if img_h < h:
+                y0 = (h - img_h) // 2
+            else:
+                y0 = 0
+            canvas.create_image(x0, y0, anchor="nw", image=tk_img, tags="pdfimg")
+            canvas.image = tk_img
+            offset_x, offset_y = x0, y0
+        canvas.image_offset = (offset_x, offset_y)
         scroll_w = max(img_w, w)
         scroll_h = max(img_h, h)
         canvas.config(scrollregion=(0, 0, scroll_w, scroll_h))
@@ -363,18 +371,24 @@ class PDFBitmapCompareApp:
             for id_ in ids:
                 if "pdfimg" not in canvas.gettags(id_):
                     canvas.delete(id_)
-            if self.show_diffs and self.diff_boxes:
-                for box_idx, (x, y, w, h) in enumerate(self.diff_boxes):
-                    rx = int(x * self.fit_scale + getattr(canvas, "image_offset", (0, 0))[0])
-                    ry = int(y * self.fit_scale + getattr(canvas, "image_offset", (0, 0))[1])
-                    rw = int(w * self.fit_scale)
-                    rh = int(h * self.fit_scale)
-                    if rw > 0 and rh > 0:
-                        color = "yellow" if self.active_box_idx == box_idx else "red"
-                        canvas.create_rectangle(
-                            rx, ry, rx + rw, ry + rh,
-                            outline=color, width=2, tags=f"diffbox_{box_idx}"
-                        )
+            zoom = self.zoom_params[idx]
+            if zoom:
+                scale, offset_x, offset_y = zoom
+            else:
+                scale = 1.0
+                offset_x = getattr(canvas, "image_offset", (0, 0))[0]
+                offset_y = getattr(canvas, "image_offset", (0, 0))[1]
+            for box_idx, (x, y, w, h) in enumerate(self.diff_boxes):
+                rx = int(x * scale + offset_x)
+                ry = int(y * scale + offset_y)
+                rw = int(w * scale)
+                rh = int(h * scale)
+                if rw > 0 and rh > 0:
+                    color = "yellow" if self.active_box_idx == box_idx else "red"
+                    canvas.create_rectangle(
+                        rx, ry, rx + rw, ry + rh,
+                        outline=color, width=2, tags=f"diffbox_{box_idx}"
+                    )
 
     def update_status(self):
         if self.diff_boxes and self.active_box_idx is not None:
@@ -510,12 +524,47 @@ class PDFBitmapCompareApp:
             if bx <= x <= bx + bw and by <= y <= by + bh:
                 if self.active_box_idx == box_idx:
                     self.active_box_idx = None  # снять выделение
+                    self.zoom_params = [None, None]
                 else:
                     self.active_box_idx = box_idx
+                    self.zoom_to_box(box_idx)
                 found = True
                 break
         if found:
             self.draw_diff_boxes()
+            self.update_status()
+
+    def zoom_to_box(self, idx):
+        # Zoom к рамке idx на обоих Canvas
+        if not self.diff_boxes or idx is None:
+            return
+        x, y, w, h = self.diff_boxes[idx]
+        for cidx, canvas in enumerate([self.canvas_original, self.canvas_final]):
+            can_w = canvas.winfo_width()
+            can_h = canvas.winfo_height()
+            img = self.tk_img_original if cidx == 0 else self.tk_img_final
+            if img is None:
+                continue
+            img_w, img_h = img.width(), img.height()
+            # Область для zoom: рамка + небольшой отступ (10%)
+            pad = 0.1
+            zx0 = max(0, int(x - w * pad))
+            zy0 = max(0, int(y - h * pad))
+            zx1 = min(img_w, int(x + w * (1 + pad)))
+            zy1 = min(img_h, int(y + h * (1 + pad)))
+            box_w = zx1 - zx0
+            box_h = zy1 - zy0
+            # Масштаб: чтобы рамка заняла 10% Canvas
+            scale = 0.1 * min(can_w / box_w, can_h / box_h)
+            # Центр рамки
+            cx = x + w // 2
+            cy = y + h // 2
+            offset_x = can_w // 2 - int(cx * scale)
+            offset_y = can_h // 2 - int(cy * scale)
+            if len(self.zoom_params) < 2:
+                self.zoom_params = [None, None]
+            self.zoom_params[cidx] = (scale, offset_x, offset_y)
+        self.render_pdf_images()
 
     def on_resize(self, event):
         # fit-to-window при изменении размера окна, но множитель пользователя сохраняется
@@ -552,6 +601,7 @@ class PDFBitmapCompareApp:
             self.active_box_idx = 0
         else:
             self.active_box_idx = (self.active_box_idx + 1) % len(self.diff_boxes)
+        self.zoom_to_box(self.active_box_idx)
         self.scroll_to_box(self.active_box_idx)
         self.draw_diff_boxes()
         self.update_status()
@@ -563,6 +613,7 @@ class PDFBitmapCompareApp:
             self.active_box_idx = len(self.diff_boxes) - 1
         else:
             self.active_box_idx = (self.active_box_idx - 1) % len(self.diff_boxes)
+        self.zoom_to_box(self.active_box_idx)
         self.scroll_to_box(self.active_box_idx)
         self.draw_diff_boxes()
         self.update_status()
