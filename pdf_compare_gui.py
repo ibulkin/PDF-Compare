@@ -24,6 +24,42 @@ LANGUAGES = {
         "minus": "-",
         "plus": "+",
         "zero": "0",
+    },
+    "en": {
+        "choose": "Choose PDF",
+        "compare": "Compare",
+        "about": "About",
+        "about_msg": "PDF Bitmap Compare PRO\n2025\nIgor Bulkin© ibulkin@gmail.com",
+        "diffs": "Differences",
+        "original": "ORIGINAL PDF",
+        "final": "FINAL PDF",
+        "lang": "Language",
+        "files_chosen": "Files chosen.",
+        "select_orig": "Select ORIGINAL PDF",
+        "select_final": "Select FINAL PDF",
+        "must_choose": "You must choose two files.",
+        "scale": "Scale",
+        "minus": "-",
+        "plus": "+",
+        "zero": "0",
+    },
+    "he": {
+        "choose": "בחר PDF",
+        "compare": "השווה",
+        "about": "אודות",
+        "about_msg": "PDF Bitmap Compare PRO\n2025\nאיגור בולקין© ibulkin@gmail.com",
+        "diffs": "הבדלים",
+        "original": "PDF מקורי",
+        "final": "PDF סופי",
+        "lang": "שפה",
+        "files_chosen": "הקבצים נבחרו.",
+        "select_orig": "בחר PDF מקורי",
+        "select_final": "בחר PDF סופי",
+        "must_choose": "יש לבחור שני קבצים.",
+        "scale": "קנה מידה",
+        "minus": "-",
+        "plus": "+",
+        "zero": "0",
     }
 }
 
@@ -76,6 +112,12 @@ class PDFBitmapCompareApp:
         self.btn_compare = tk.Button(control_frame, text=tr("compare", self.language), command=self.toggle_compare, bg="#eaeaea", relief="groove")
         self.btn_compare.pack(side="left", padx=10)
 
+        # --- Кнопки перехода по отличиям ---
+        self.btn_prev_diff = tk.Button(control_frame, text="⟨", command=self.prev_diff, bg="#eaeaea", relief="groove")
+        self.btn_prev_diff.pack(side="left", padx=2)
+        self.btn_next_diff = tk.Button(control_frame, text="⟩", command=self.next_diff, bg="#eaeaea", relief="groove")
+        self.btn_next_diff.pack(side="left", padx=2)
+
         scale_frame = tk.Frame(control_frame, bg="#F3F3F3")
         scale_frame.pack(side="left", padx=12)
 
@@ -121,6 +163,7 @@ class PDFBitmapCompareApp:
         self.canvas_original.config(yscrollcommand=self.scrollbar_orig_y.set, xscrollcommand=self.scrollbar_orig_x.set)
         self.scrollbar_orig_y.grid(row=0, column=1, sticky="ns")
         self.scrollbar_orig_x.grid(row=1, column=0, sticky="ew")
+        self.canvas_original.config(yscrollcommand=self.sync_yview, xscrollcommand=self.sync_xview)
 
         # Разделитель
         self.divider = tk.Frame(canv_frame, height=2, bg="#222222")
@@ -144,6 +187,7 @@ class PDFBitmapCompareApp:
         self.canvas_final.config(yscrollcommand=self.scrollbar_fin_y.set, xscrollcommand=self.scrollbar_fin_x.set)
         self.scrollbar_fin_y.grid(row=2, column=1, sticky="ns")
         self.scrollbar_fin_x.grid(row=3, column=0, sticky="ew")
+        self.canvas_final.config(yscrollcommand=self.sync_yview_final, xscrollcommand=self.sync_xview_final)
 
         # Навигация мышкой
         self.canvas_original.bind("<MouseWheel>", self.on_mousewheel)
@@ -271,12 +315,12 @@ class PDFBitmapCompareApp:
 
     def toggle_compare(self):
         if self.show_diffs:
-            self.diff_boxes = []
             self.show_diffs = False
             self.active_box_idx = None
         else:
             self.compare()
             self.show_diffs = True
+            self.render_pdf_images()
         self.draw_diff_boxes()
 
     def compare(self):
@@ -293,6 +337,7 @@ class PDFBitmapCompareApp:
         self.diff_boxes = [(x, y, w, h) for (x, y, w, h) in boxes]
         self.active_box_idx = None
         self.update_status()
+        self.draw_diff_boxes()
 
     def merge_boxes(self, boxes, min_distance=18):
         result = []
@@ -319,16 +364,23 @@ class PDFBitmapCompareApp:
                 if "pdfimg" not in canvas.gettags(id_):
                     canvas.delete(id_)
             if self.show_diffs and self.diff_boxes:
-                offset_x, offset_y = getattr(canvas, "image_offset", (0, 0))
                 for box_idx, (x, y, w, h) in enumerate(self.diff_boxes):
-                    color = "yellow" if self.active_box_idx == box_idx else "red"
-                    canvas.create_rectangle(
-                        x + offset_x, y + offset_y, x + w + offset_x, y + h + offset_y,
-                        outline=color, width=2, tags=f"diffbox_{box_idx}"
-                    )
+                    rx = int(x * self.fit_scale + getattr(canvas, "image_offset", (0, 0))[0])
+                    ry = int(y * self.fit_scale + getattr(canvas, "image_offset", (0, 0))[1])
+                    rw = int(w * self.fit_scale)
+                    rh = int(h * self.fit_scale)
+                    if rw > 0 and rh > 0:
+                        color = "yellow" if self.active_box_idx == box_idx else "red"
+                        canvas.create_rectangle(
+                            rx, ry, rx + rw, ry + rh,
+                            outline=color, width=2, tags=f"diffbox_{box_idx}"
+                        )
 
     def update_status(self):
-        text = f"{tr('diffs', self.language)}: {len(self.diff_boxes)}"
+        if self.diff_boxes and self.active_box_idx is not None:
+            text = f"{tr('diffs', self.language)}: {len(self.diff_boxes)}  [{self.active_box_idx+1}/{len(self.diff_boxes)}]"
+        else:
+            text = f"{tr('diffs', self.language)}: {len(self.diff_boxes)}"
         self.status.config(text=text)
 
     def change_language(self, event):
@@ -344,18 +396,15 @@ class PDFBitmapCompareApp:
         self.draw_diff_boxes()
 
     def enable_hand_mode(self, event=None):
-        print("ENABLE_HAND_MODE called")
         if not self._hand_mode:
             self.toggle_hand_mode()
 
     def disable_hand_mode(self, event=None):
-        print("DISABLE_HAND_MODE called")
         if self._hand_mode:
             self.toggle_hand_mode()
 
     def toggle_hand_mode(self, event=None):
         self._hand_mode = not self._hand_mode
-        print(f"TOGGLE_HAND_MODE: _hand_mode = {self._hand_mode}")
         cursor = "hand2" if self._hand_mode else "arrow"
         for canvas in [self.canvas_original, self.canvas_final]:
             canvas.config(cursor=cursor)
@@ -478,6 +527,69 @@ class PDFBitmapCompareApp:
             self.canvas_original.config(height=half_h)
             self.canvas_final.config(height=half_h)
             self.render_pdf_images()
+
+    # --- Синхронизация прокрутки ---
+    def sync_yview(self, *args):
+        self.canvas_original.yview_moveto(float(args[0]))
+        self.canvas_final.yview_moveto(float(args[0]))
+
+    def sync_xview(self, *args):
+        self.canvas_original.xview_moveto(float(args[0]))
+        self.canvas_final.xview_moveto(float(args[0]))
+
+    def sync_yview_final(self, *args):
+        self.canvas_final.yview_moveto(float(args[0]))
+        self.canvas_original.yview_moveto(float(args[0]))
+
+    def sync_xview_final(self, *args):
+        self.canvas_final.xview_moveto(float(args[0]))
+        self.canvas_original.xview_moveto(float(args[0]))
+
+    def next_diff(self):
+        if not self.diff_boxes:
+            return
+        if self.active_box_idx is None:
+            self.active_box_idx = 0
+        else:
+            self.active_box_idx = (self.active_box_idx + 1) % len(self.diff_boxes)
+        self.scroll_to_box(self.active_box_idx)
+        self.draw_diff_boxes()
+        self.update_status()
+
+    def prev_diff(self):
+        if not self.diff_boxes:
+            return
+        if self.active_box_idx is None:
+            self.active_box_idx = len(self.diff_boxes) - 1
+        else:
+            self.active_box_idx = (self.active_box_idx - 1) % len(self.diff_boxes)
+        self.scroll_to_box(self.active_box_idx)
+        self.draw_diff_boxes()
+        self.update_status()
+
+    def scroll_to_box(self, idx):
+        # Прокрутить оба Canvas так, чтобы рамка была по центру
+        if not self.diff_boxes or idx is None:
+            return
+        x, y, w, h = self.diff_boxes[idx]
+        for canvas in [self.canvas_original, self.canvas_final]:
+            can_w = canvas.winfo_width()
+            can_h = canvas.winfo_height()
+            offset_x = getattr(canvas, "image_offset", (0, 0))[0]
+            offset_y = getattr(canvas, "image_offset", (0, 0))[1]
+            rx = int(x * self.fit_scale + offset_x)
+            ry = int(y * self.fit_scale + offset_y)
+            rw = int(w * self.fit_scale)
+            rh = int(h * self.fit_scale)
+            # Центр рамки
+            cx = rx + rw // 2
+            cy = ry + rh // 2
+            # Перевести в fraction для xview/yview
+            if can_w > 0 and can_h > 0:
+                frac_x = max(0, (cx - can_w // 2) / max(1, canvas.bbox("pdfimg")[2] - can_w))
+                frac_y = max(0, (cy - can_h // 2) / max(1, canvas.bbox("pdfimg")[3] - can_h))
+                canvas.xview_moveto(frac_x)
+                canvas.yview_moveto(frac_y)
 
 if __name__ == "__main__":
     root = tk.Tk()
